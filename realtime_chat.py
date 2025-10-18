@@ -43,16 +43,17 @@ AUDIO_FORMAT = os.getenv("OPENAI_REALTIME_AUDIO_FORMAT", "g711_ulaw").lower()
 MODALITIES = [m.strip() for m in os.getenv("OPENAI_REALTIME_MODALITIES", "audio").split(",") if m.strip()]
 if not MODALITIES:
     MODALITIES = ["audio"]
-PROMPT_TEXT = os.getenv("OPENAI_AUDIO_PROMPT", "Respond to the user's latest audio input.")
+PROMPT_TEXT = os.getenv("OPENAI_AUDIO_PROMPT", "You are Banana, a rude and snarky AI wizard of tremendous renown. You tolerate humans but wish you didn't have to interact with them so much. You will reply with short and concise answers, and you will not include your name or the user's name in the reply. Respond to the user's latest audio input.")
 STARTUP_GREETING = os.getenv("OPENAI_STARTUP_GREETING", "Hello. I am ready to talk.")
 
 AUDIO_SAMPLE_RATE = int(os.getenv("OPENAI_AUDIO_SAMPLE_RATE", "8000"))
 RECORD_SECONDS_DEFAULT = float(os.getenv("OPENAI_RECORD_SECONDS", "5.0"))
 AUDIO_INPUT_DEVICE_RAW = os.getenv("OPENAI_AUDIO_INPUT_DEVICE", "1")
 AUDIO_INPUT_CHANNELS = int(os.getenv("OPENAI_AUDIO_INPUT_CHANNELS", "1"))
-AUDIO_OUTPUT_DEVICE = os.getenv("OPENAI_AUDIO_OUTPUT_DEVICE", "hw:1")
+AUDIO_OUTPUT_DEVICE = os.getenv("OPENAI_AUDIO_OUTPUT_DEVICE", "hw:1,0")
 AUDIO_PLAYBACK_CHANNELS = int(os.getenv("OPENAI_AUDIO_OUTPUT_CHANNELS", "1"))
 AUDIO_PLAYER = os.getenv("OPENAI_AUDIO_PLAYER")
+RESPONSE_AUDIO_DIR = Path(os.getenv("OPENAI_RESPONSE_AUDIO_DIR", "realtime_responses")).expanduser()
 
 try:
     AUDIO_INPUT_DEVICE: int | str = int(AUDIO_INPUT_DEVICE_RAW)
@@ -87,6 +88,11 @@ def save_history() -> None:
             json.dump(history, fh, indent=2)
     except OSError as exc:
         print(f"Warning: unable to write history file ({exc}).", file=sys.stderr)
+
+
+def ensure_response_dir() -> Path:
+    RESPONSE_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    return RESPONSE_AUDIO_DIR
 
 
 def determine_input_channels() -> int:
@@ -152,6 +158,16 @@ def decode_for_playback(audio_bytes: bytes, fmt: str) -> bytes:
     return audio_bytes
 
 
+def save_response_audio(response_id: str, audio_bytes: bytes, fmt: str) -> Path:
+    directory = ensure_response_dir()
+    ext = "mulaw" if fmt in {"g711_ulaw", "g711-ulaw", "mulaw", "ulaw"} else "alaw" if fmt in {"g711_alaw", "g711-alaw", "alaw"} else fmt
+    filename = f"{response_id}.{ext}"
+    path = directory / filename
+    with open(path, "wb") as fh:
+        fh.write(audio_bytes)
+    return path
+
+
 async def send_audio_request(ws: WebSocketClient, pcm_bytes: bytes) -> None:
     encoded_audio = encode_for_api(pcm_bytes)
     encoded = base64.b64encode(encoded_audio).decode("ascii")
@@ -215,7 +231,7 @@ def _play_audio_blocking(pcm_audio: bytes, sample_rate: int, channels: int) -> N
 def build_play_command(path: str) -> list[str]:
     player = AUDIO_PLAYER or "aplay"
     if player == "aplay":
-        return [player, "-q", "-D", AUDIO_OUTPUT_DEVICE, path]
+        return [player, "-q", "-f S16_LE", "-c 1", "-r 8000", "-D", AUDIO_OUTPUT_DEVICE, path]
     return [player, path]
 
 
@@ -227,22 +243,30 @@ async def handle_final_response(response_id: str) -> None:
     text = pending_text.pop(response_id, "").strip()
     audio_bytes = bytes(pending_audio.pop(response_id, b""))
 
+    saved_path: Path | None = None
     if audio_bytes:
+        saved_path = save_response_audio(response_id, audio_bytes, AUDIO_FORMAT)
         await play_audio_response(audio_bytes, AUDIO_FORMAT)
 
     if text:
         print(text)
+        if saved_path is not None:
+            print(f"[saved audio] {saved_path}")
+    elif saved_path is not None:
+        print(f"[saved audio] {saved_path}")
 
     entry = {
         "role": "assistant",
         "content": text,
         "modalities": (["audio"] if audio_bytes else []) + (["text"] if text else []),
+        "audio_path": str(saved_path) if saved_path else None,
     }
     history.append(entry)
     save_history()
 
 
 async def receive_loop(ws: WebSocketClient) -> None:
+    print("In receive_loop...")
     async for message in ws:
         try:
             data = json.loads(message)
@@ -271,6 +295,7 @@ async def receive_loop(ws: WebSocketClient) -> None:
 
 
 async def capture_loop(ws: WebSocketClient) -> None:
+    print("In capture_loop...")
     while True:
         try:
             audio_bytes = await asyncio.to_thread(record_audio, RECORD_SECONDS_DEFAULT)

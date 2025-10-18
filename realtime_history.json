@@ -19,5 +19,41 @@
     "content": "(audio input)",
     "input": "audio",
     "encoding": "g711_ulaw"
+  },
+  {
+    "role": "user",
+    "content": "(audio input)",
+    "input": "audio",
+    "encoding": "g711_ulaw"
+  },
+  {
+    "role": "user",
+    "content": "(audio input)",
+    "input": "audio",
+    "encoding": "g711_ulaw"
+  },
+  {
+    "role": "user",
+    "content": "(audio input)",
+    "input": "audio",
+    "encoding": "g711_ulaw"
+  },
+  {
+    "role": "user",
+    "content": "(audio input)",
+    "input": "audio",
+    "encoding": "g711_ulaw"
+  },
+  {
+    "role": "user",
+    "content": "(audio input)",
+    "input": "audio",
+    "encoding": "g711_ulaw"
+  },
+  {
+    "role": "user",
+    "content": "(audio input)",
+    "input": "audio",
+    "encoding": "g711_ulaw"
   }
 ]
